@@ -1,7 +1,6 @@
-// Your settings. This is a simple personal project, so the keys sit right here.
-// NOTE: anyone who opens your website can read this file, so don't share keys you care about.
+// Settings for GoldPulse AI.
+// GEMINI_API_KEY is stored safely in Vercel Environment Variables (not exposed on GitHub).
 window.GOLDPULSE = {
-  GEMINI_API_KEY: 'AQ.Ab8RN6LjFW4icj7FBdqAwiduStlTbAtOnr6hg_Hefgl-tDN9cA',
   NEWSDATA_API_KEY: 'pub_e911d294228c4c209f6d102c1b2e1d22',
 
   // Optional. Prices come free from gold-api.com. If you want GoldAPI as a backup, paste its key here.
