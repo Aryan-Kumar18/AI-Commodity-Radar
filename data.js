@@ -1,13 +1,5 @@
 'use strict';
 
-/*
- * All data fetching, maths and AI logic. Runs entirely in the browser, so the site is just static files.
- *   Prices   : gold-api.com (live spot, no key) -> GoldAPI (if key given) -> daily currency-api
- *   History  : daily gold/silver/USD-INR values from the free currency-api dataset (cached in localStorage)
- *   USD/INR  : open.er-api.com -> daily currency-api
- *   News     : NewsData.io (your key) + Google News RSS (via rss2json, then allorigins as backup)
- *   AI       : Google Gemini (your key); falls back to a simple rule-based signal if Gemini fails
- */
 (function () {
   var CFG = window.GOLDPULSE || {};
   var OZ = 31.1034768;
@@ -43,7 +35,6 @@
   }
 
   /* ---------- prices ---------- */
-  // Daily dataset: usd -> xau / xag (ounces per 1 USD) and usd -> inr. ver is a date (YYYY-MM-DD) or 'latest'.
   function fxFile(ver) {
     var u1 = 'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@' + ver + '/v1/currencies/usd.json';
     var u2 = 'https://' + ver + '.currency-api.pages.dev/v1/currencies/usd.json';
@@ -54,7 +45,6 @@
       if (!(g > 0 && isFinite(g) && s > 0 && isFinite(s) && fx > 0 && isFinite(fx))) throw new Error('bad values');
       return { g: g, s: s, fx: fx };
     }
-    // Validate inside each attempt, so a bad answer from the first source still falls back to the second.
     return getJson(u1).then(parse).catch(function () { return getJson(u2).then(parse); });
   }
 
@@ -67,7 +57,7 @@
     return pool(missing, 10, function (d) {
       return fxFile(d).then(
         function (v) { cache[d] = [v.g, v.s, v.fx]; },
-        function () { if (Date.now() - Date.parse(d) > 4 * 86400000) cache[d] = 0; } // old gap: don't retry forever
+        function () { if (Date.now() - Date.parse(d) > 4 * 86400000) cache[d] = 0; }
       );
     }).then(function () {
       var keep = {};
@@ -144,7 +134,6 @@
       volatility20d: Math.sqrt(variance) * 100
     };
   }
-  // Transparent rule-based signal: feeds the AI and is the fallback if the AI is unavailable.
   function ruleSignal(ind, price) {
     var score = 0, why = [];
     if (ind.rsi14 != null) {
@@ -187,11 +176,10 @@
     return out;
   }
 
-  // Rupee strength from the Indian point of view: USD/INR falling = rupee stronger (positive change).
   function rupeeChange(fxs, back) {
     if (fxs.length <= back) return null;
     var then = fxs[fxs.length - 1 - back], now = fxs[fxs.length - 1];
-    return (then / now - 1) * 100; // positive = rupee got stronger
+    return (then / now - 1) * 100;
   }
   function buildRupee(hist, fx) {
     var fxs = hist.map(function (p) { return p.fx; });
@@ -199,14 +187,14 @@
     var prev = fxs.length > 1 ? fxs[fxs.length - 2] : fx;
     var lo = Math.min.apply(null, fxs), hi = Math.max.apply(null, fxs);
     return {
-      price: fx,                       // 1 USD = X INR
-      perInr: 1 / fx,                  // 1 INR = Y USD
-      changePct1d: ((fx - prev) / prev) * 100,       // USD/INR move (kept for reference)
+      price: fx,
+      perInr: 1 / fx,
+      changePct1d: ((fx - prev) / prev) * 100,
       rupeeChange1d: rupeeChange(fxs, 1),
       rupeeChange7d: rupeeChange(fxs, 7),
       rupeeChange30d: rupeeChange(fxs, 30),
       rupeeChange3m: fxs.length > 2 ? rupeeChange(fxs, fxs.length - 1) : null,
-      strongest: lo, weakest: hi,      // lowest USD/INR = rupee strongest
+      strongest: lo, weakest: hi,
       avg3m: fxs.reduce(function (a, b) { return a + b; }, 0) / fxs.length,
       history: hist.map(function (p) { return { t: p.t, fx: p.fx }; }).concat([{ t: Date.now(), fx: fx }])
     };
@@ -216,8 +204,6 @@
   var mcache = { t: 0, data: null };
   var inflight = null;
 
-  // Live spot for one metal. If the live source hiccups, keep the last good live price for a few minutes
-  // instead of jumping to a daily value.
   function liveKeep(sym) {
     return liveMetal(sym).then(function (r) {
       var prev = live.last[sym];
@@ -369,7 +355,7 @@
     });
   }
 
-  /* ---------- AI analysis (Gemini) ---------- */
+  /* ---------- AI analysis (via /api/gemini backend) ---------- */
   var LS_AI = 'gp_ai_v1';
   var AI_TTL = 30 * 60 * 1000;
   function f(n, d) { return n == null || !isFinite(n) ? 'n/a' : Number(n).toFixed(d == null ? 2 : d); }
@@ -409,79 +395,19 @@
     ].join('\n');
   }
 
-  // Google renames/retires models often, so ask the API which models this key can actually use.
-  var LS_MODELS = 'gp_models_v1';
-  function modelScore(n) {
-    var v = /gemini-(\d+(?:\.\d+)?)/.exec(n);
-    var ver = v ? parseFloat(v[1]) : 0;
-    var tier = /flash-lite/.test(n) ? 1 : /flash/.test(n) ? 3 : /pro/.test(n) ? 2 : 0;
-    return tier * 100 + ver * 10 - (/(preview|exp)/.test(n) ? 3 : 0);
-  }
-  function listModels(key) {
-    var c = lsGet(LS_MODELS);
-    if (c && c.list && c.list.length && Date.now() - c.t < 24 * 3600 * 1000) return Promise.resolve(c.list);
-    return fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=' + encodeURIComponent(key)).then(function (r) {
-      if (!r.ok) {
-        return r.text().then(function (b) {
-          var m = /"message":\s*"([^"]+)"/.exec(b);
-          var e = new Error('AI key problem (HTTP ' + r.status + '): ' + (m ? m[1] : b.slice(0, 120)));
-          e.fatal = r.status === 400 || r.status === 401 || r.status === 403; // only key problems stop here
-          throw e;
-        });
-      }
-      return r.json();
-    }).then(function (j) {
-      var list = (j.models || [])
-        .filter(function (m) { return (m.supportedGenerationMethods || []).indexOf('generateContent') >= 0; })
-        .map(function (m) { return String(m.name).replace(/^models\//, ''); })
-        .filter(function (n) { return /^gemini-/.test(n) && !/(image|tts|live|audio|embedding|robotics|computer|native|vision|learnlm)/i.test(n); })
-        .sort(function (x, y) { return modelScore(y) - modelScore(x); });
-      if (list.length) lsSet(LS_MODELS, { t: Date.now(), list: list });
-      return list;
-    });
-  }
-
   function callGemini(prompt) {
-    var key = CFG.GEMINI_API_KEY;
-    if (!key) return Promise.reject(new Error('No AI key set in config.js'));
-    return listModels(key).catch(function (e) {
-      if (e.fatal) throw e;
-      return []; // could not list models, fall back to common names below
-    }).then(function (found) {
-      var models = [CFG.GEMINI_MODEL].concat(found.slice(0, 4), ['gemini-2.5-flash', 'gemini-2.0-flash'])
-        .filter(function (m, i, a) { return m && a.indexOf(m) === i; }).slice(0, 5);
-      var tried = [], idx = 0;
-      function next() {
-        if (idx >= models.length) return Promise.reject(new Error('No working AI model. Tried: ' + tried.join('; ')));
-        var model = models[idx++];
-        return fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(key), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            generationConfig: { temperature: 0.3, maxOutputTokens: 8192, responseMimeType: 'application/json' }
-          })
-        }).then(function (r) {
-          if (!r.ok) {
-            return r.text().then(function (b) {
-              var m = /"message":\s*"([^"]+)"/.exec(b);
-              var msg = (m ? m[1] : b).slice(0, 110);
-              tried.push(model + ' (HTTP ' + r.status + ': ' + msg + ')');
-              if (/API key/i.test(msg) || r.status === 401 || r.status === 403) {
-                throw new Error('AI key rejected: ' + msg);
-              }
-              return next(); // 404 / 429 / 5xx / unsupported option: try the next model
-            });
-          }
-          return r.json().then(function (j) {
-            var parts = j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts;
-            var text = (parts || []).map(function (p) { return p.text || ''; }).join('');
-            if (!text) { tried.push(model + ' (empty answer)'); return next(); }
-            return { model: model, text: text };
-          });
-        });
-      }
-      return next();
+    return fetch('/api/gemini', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: prompt,
+        preferredModel: CFG.GEMINI_MODEL || ''
+      })
+    }).then(function (r) {
+      return r.json().then(function (j) {
+        if (!r.ok) throw new Error(j.error || 'AI server error (HTTP ' + r.status + ')');
+        return { model: j.model, text: j.text };
+      });
     });
   }
 
