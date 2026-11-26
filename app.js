@@ -483,7 +483,7 @@
   loadAnalysis();
   setInterval(tickStatus, 1000);
   setInterval(loadNews, 5 * 60 * 1000);
-  setInterval(loadAnalysis, 30 * 60 * 1000);
+  setInterval(loadAnalysis, 60 * 60 * 1000);
   document.addEventListener('visibilitychange', function () {
     if (!document.hidden) { priceDelay = PRICE_EVERY; loadPrices().then(schedulePrices); }
   });

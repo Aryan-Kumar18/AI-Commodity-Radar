@@ -382,7 +382,7 @@
 
   /* ---------- AI analysis (Gemini) ---------- */
   var LS_AI = 'gp_ai_v1';
-  var AI_TTL = 30 * 60 * 1000;
+  var AI_TTL = 60 * 60 * 1000; // one AI call per hour per browser keeps the free quota going further
   function f(n, d) { return n == null || !isFinite(n) ? 'n/a' : Number(n).toFixed(d == null ? 2 : d); }
 
   function metalBlock(name, m) {
@@ -452,6 +452,15 @@
     });
   }
 
+  // Remember which model worked, and which ones are out of free quota (skipped for an hour).
+  var LS_GOOD = 'gp_goodmodel_v1', LS_BAD = 'gp_badmodels_v1';
+  function badModels() {
+    var bad = lsGet(LS_BAD) || {}, now = Date.now();
+    Object.keys(bad).forEach(function (k) { if (now - bad[k] > 3600 * 1000) delete bad[k]; });
+    return bad;
+  }
+  function markBad(model) { var bad = badModels(); bad[model] = Date.now(); lsSet(LS_BAD, bad); }
+
   function callGemini(prompt) {
     var key = CFG.GEMINI_API_KEY;
     if (!key) return Promise.reject(new Error('No AI key found. Add it in keys.js (local) or Vercel Environment Variables (live site).'));
@@ -459,11 +468,19 @@
       if (e.fatal) throw e;
       return []; // could not list models, fall back to common names below
     }).then(function (found) {
-      var models = [CFG.GEMINI_MODEL].concat(found.slice(0, 4), ['gemini-2.5-flash', 'gemini-2.0-flash'])
-        .filter(function (m, i, a) { return m && a.indexOf(m) === i; }).slice(0, 5);
+      var all = [CFG.GEMINI_MODEL, lsGet(LS_GOOD)].concat(found, ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'])
+        .filter(function (m, i, a) { return m && a.indexOf(m) === i; });
+      var bad = badModels();
+      var models = all.filter(function (m) { return !bad[m]; }).slice(0, 8);
+      if (!models.length) return Promise.reject(new Error('The AI is out of free quota for now. It usually resets within a day.'));
       var tried = [], idx = 0, t0 = Date.now();
       function next() {
-        if (idx >= models.length) return Promise.reject(new Error('No working AI model. Tried: ' + tried.join('; ')));
+        if (idx >= models.length) {
+          var all429 = tried.length && tried.every(function (t) { return /HTTP 429/.test(t); });
+          return Promise.reject(new Error(all429
+            ? 'The AI\'s free quota is used up for now (' + tried.length + ' models tried). It usually resets within a day.'
+            : 'No working AI model. Tried: ' + tried.join('; ')));
+        }
         var model = models[idx++];
         return fetchT('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(key), {
           timeoutMs: 25000,
@@ -482,13 +499,15 @@
               if (/API key/i.test(msg) || r.status === 401 || r.status === 403) {
                 throw new Error('AI key rejected: ' + msg);
               }
-              return next(); // 404 / 429 / 5xx / unsupported option: try the next model
+              if (r.status === 429 || r.status === 404) markBad(model); // out of quota / retired: skip it for a while
+              return next(); // try the next model
             });
           }
           return r.json().then(function (j) {
             var parts = j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts;
             var text = (parts || []).map(function (p) { return p.text || ''; }).join('');
             if (!text) { tried.push(model + ' (empty answer)'); return next(); }
+            lsSet(LS_GOOD, model); // use this one first next time
             return { model: model, text: text };
           });
         }).catch(function (e) {
