@@ -1,16 +1,11 @@
-// Settings for GoldPulse AI.
-// GEMINI_API_KEY is stored safely in Vercel Environment Variables (not exposed on GitHub).
+// Public settings. Keep API keys OUT of this file, because it is uploaded to GitHub.
+// Keys go in keys.js (on your computer) or in Vercel Environment Variables (on the live site).
 window.GOLDPULSE = {
-  NEWSDATA_API_KEY: 'pub_e911d294228c4c209f6d102c1b2e1d22',
-
-  // Optional. Prices come free from gold-api.com. If you want GoldAPI as a backup, paste its key here.
-  GOLDAPI_KEY: '',
-
   // Indian price estimate = international price x (1 + import duty) x (1 + GST).
   // Check the current rates and edit if they change.
   IMPORT_DUTY_PCT: 6,
   GST_PCT: 3,
 
-  // Optional: force a specific Gemini model, e.g. 'gemini-2.5-flash'
+  // Optional: force a specific AI model name. Leave empty to choose automatically.
   GEMINI_MODEL: ''
 };
