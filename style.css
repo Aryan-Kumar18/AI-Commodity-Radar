@@ -289,3 +289,7 @@ h1, h2, h3, p { margin: 0; }
   .cards { gap: 10px; }
   .card-label { font-size: 0.76rem; }
 }
+
+.pulse-text { animation: pulseText 1.4s ease-in-out infinite; }
+@keyframes pulseText { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .pulse-text { animation: none; } }

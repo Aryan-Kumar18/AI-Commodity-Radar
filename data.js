@@ -30,6 +30,17 @@
   function getJson(url, opts, ms) { return request(url, opts, ms, false); }
   function getText(url, opts, ms) { return request(url, opts, ms, true); }
 
+  // fetch with a time limit (opts.timeoutMs, default 25 s) so nothing can hang forever
+  function fetchT(url, opts) {
+    opts = opts || {};
+    var ms = opts.timeoutMs || 25000;
+    delete opts.timeoutMs;
+    var ctrl = new AbortController();
+    setTimeout(function () { ctrl.abort(); }, ms);
+    opts.signal = ctrl.signal;
+    return fetch(url, opts);
+  }
+
   function pool(items, n, fn) {
     var i = 0;
     function worker() {
@@ -415,12 +426,12 @@
     var v = /gemini-(\d+(?:\.\d+)?)/.exec(n);
     var ver = v ? parseFloat(v[1]) : 0;
     var tier = /flash-lite/.test(n) ? 1 : /flash/.test(n) ? 3 : /pro/.test(n) ? 2 : 0;
-    return tier * 100 + ver * 10 - (/(preview|exp)/.test(n) ? 3 : 0);
+    return tier * 100 + ver * 10 - (/(preview|exp)/.test(n) ? 8 : 0); // stable models are more reliable than previews
   }
   function listModels(key) {
     var c = lsGet(LS_MODELS);
     if (c && c.list && c.list.length && Date.now() - c.t < 24 * 3600 * 1000) return Promise.resolve(c.list);
-    return fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=' + encodeURIComponent(key)).then(function (r) {
+    return fetchT('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=' + encodeURIComponent(key), { timeoutMs: 10000 }).then(function (r) {
       if (!r.ok) {
         return r.text().then(function (b) {
           var m = /"message":\s*"([^"]+)"/.exec(b);
@@ -450,11 +461,12 @@
     }).then(function (found) {
       var models = [CFG.GEMINI_MODEL].concat(found.slice(0, 4), ['gemini-2.5-flash', 'gemini-2.0-flash'])
         .filter(function (m, i, a) { return m && a.indexOf(m) === i; }).slice(0, 5);
-      var tried = [], idx = 0;
+      var tried = [], idx = 0, t0 = Date.now();
       function next() {
         if (idx >= models.length) return Promise.reject(new Error('No working AI model. Tried: ' + tried.join('; ')));
         var model = models[idx++];
-        return fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(key), {
+        return fetchT('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(key), {
+          timeoutMs: 25000,
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -479,6 +491,13 @@
             if (!text) { tried.push(model + ' (empty answer)'); return next(); }
             return { model: model, text: text };
           });
+        }).catch(function (e) {
+          if (e && e.name === 'AbortError') {
+            tried.push(model + ' (no answer in 25 s)');
+            if (idx < models.length && Date.now() - t0 < 30000) return next(); // one more try with another model
+            throw new Error('The AI took too long to answer. Tried: ' + tried.join('; '));
+          }
+          throw e;
         });
       }
       return next();
@@ -510,13 +529,28 @@
     };
   }
 
+  // Instant indicator-based read, shown while the AI is still thinking.
+  function quickRead(m) {
+    function side(x) {
+      var r = ruleSide(x);
+      r.risks = ['Quick technical read only. The AI is still analysing the news.'];
+      return r;
+    }
+    return {
+      source: 'quick', model: null,
+      marketMood: 'Showing a quick technical read first. The AI is reading today\'s news and will replace this shortly.',
+      gold: side(m.gold), silver: side(m.silver), keyHeadlines: [], generatedAt: Date.now()
+    };
+  }
+
   function getAnalysis(force) {
     var cached = lsGet(LS_AI);
     if (!force && cached && cached.data && Date.now() - cached.t < (cached.data.source === 'gemini' ? AI_TTL : 2 * 60 * 1000)) {
       return Promise.resolve(cached.data);
     }
     return getMarket().then(function (market) {
-      return getNews().catch(function () { return { items: [] }; }).then(function (news) {
+      var newsLimit = new Promise(function (res) { setTimeout(function () { res({ items: [] }); }, 10000); });
+      return Promise.race([getNews().catch(function () { return { items: [] }; }), newsLimit]).then(function (news) {
         return callGemini(buildPrompt(market, news)).then(function (res) {
           var ai = JSON.parse(res.text.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim());
           var byTitle = {};
@@ -549,5 +583,5 @@
     });
   }
 
-  window.GP = { getMarket: getMarket, getNews: getNews, getAnalysis: getAnalysis };
+  window.GP = { getMarket: getMarket, getNews: getNews, getAnalysis: getAnalysis, quickRead: quickRead };
 })();

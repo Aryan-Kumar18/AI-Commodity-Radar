@@ -343,7 +343,11 @@
     $('moodText').textContent = d.marketMood || '';
     adviceCard('adviceGold', 'Gold', 'gold-dot', d.gold);
     adviceCard('adviceSilver', 'Silver', 'silver-dot', d.silver);
-    $('advisorMeta').textContent = (d.source === 'gemini' ? 'AI · ' : 'Rule-based · ') + 'updated ' + timeAgo(d.generatedAt);
+    $('advisorMeta').textContent = d.source === 'quick'
+      ? 'Quick technical read · the AI is analysing the news…'
+      : (d.source === 'gemini' ? 'AI · ' : 'Rule-based · ') + 'updated ' + timeAgo(d.generatedAt);
+    $('advisorMeta').classList.toggle('pulse-text', d.source === 'quick');
+    if (d.source !== 'quick') state.aiShown = true;
     var oldNote = $('moodCard').querySelector('.note');
     if (oldNote) oldNote.remove();
     if (d.note) {
@@ -455,8 +459,17 @@
       if (!state.news) $('newsGrid').innerHTML = '<p class="empty">Could not load news right now. ' + esc(e.message) + '</p>';
     });
   }
+  var aiRetries = 0;
   function loadAnalysis() {
-    return GP.getAnalysis().then(renderAnalysis).catch(function (e) {
+    // show a quick technical read straight away; the AI answer replaces it when ready
+    if (!state.aiShown) {
+      GP.getMarket().then(function (m) { if (!state.aiShown) renderAnalysis(GP.quickRead(m)); }).catch(function () {});
+    }
+    return GP.getAnalysis().then(function (d) {
+      renderAnalysis(d);
+      if (d.source === 'gemini') aiRetries = 0;
+      else if (aiRetries < 3) { aiRetries++; setTimeout(loadAnalysis, 2.5 * 60 * 1000); } // AI failed: try again in a few minutes
+    }).catch(function (e) {
       $('moodText').textContent = 'The AI read could not be generated right now. ' + e.message;
       $('adviceGold').innerHTML = '';
       $('adviceSilver').innerHTML = '';
