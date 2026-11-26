@@ -1,6 +1,6 @@
-LINK:- https://gold-pulse-ai-three.vercel.app/
+LINK:- https://ai-commodity-radar.vercel.app/
 
-GoldPulse AI is a one-page dashboard for Indian gold and silver buyers. It shows near-live gold and silver prices in ₹ and $, tracks how the rupee is moving against the dollar, pulls in the world news that moves precious metals, and uses AI to give a simple Buy / Wait / Sell read with reasons and risks.
+AI-Commodity-Radar is a one-page dashboard for Indian gold and silver buyers. It shows near-live gold and silver prices in ₹ and $, tracks how the rupee is moving against the dollar, pulls in the world news that moves precious metals, and uses AI to give a simple Buy / Wait / Sell read with reasons and risks.
 
 Features
 - Gold (24K/22K per 10 g) and silver (per kg) prices that refresh every 15 seconds
